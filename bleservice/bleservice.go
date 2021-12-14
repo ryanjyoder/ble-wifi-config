@@ -1,6 +1,9 @@
 package bleservice
 
 import (
+	"fmt"
+
+	"github.com/ryanjyoder/ble-wifi-config/connectivity"
 	"github.com/ryanjyoder/ble-wifi-config/wificonfig"
 	"tinygo.org/x/bluetooth"
 )
@@ -15,12 +18,44 @@ var (
 )
 
 type BleService struct {
+	wifiConfigService   wificonfig.WifiConfigService
+	connectivityService connectivity.ConnectivityService
+	adapter             bluetooth.Adapter
+
 	connectedToInternetChar bluetooth.Characteristic
 	connectedSsidChar       bluetooth.Characteristic
 	setSSidChar             bluetooth.Characteristic
 	setSecretChar           bluetooth.Characteristic
 	connectionErrorChar     bluetooth.Characteristic
-	wifiConfigService       wificonfig.WifiConfigService
+}
+
+func NewBleService(adapter bluetooth.Adapter, wifiConfigService wificonfig.WifiConfigService, connectivityService connectivity.ConnectivityService) (*BleService, error) {
+	service := &BleService{
+		wifiConfigService:   wifiConfigService,
+		connectivityService: connectivityService,
+		adapter:             adapter,
+	}
+
+	return service, nil
+}
+
+func (s *BleService) Start() error {
+	err := s.wireBleAttributes()
+	if err != nil {
+		return err
+	}
+
+}
+
+func (s *BleService) wireBleAttributes() error {
+	err := s.adapter.AddService(s.getServiceConfig())
+	if err != nil {
+		return err
+	}
+
+	s.connectivityService.NotifyInternetChange(s.handleInternetStatusChange)
+	s.wifiConfigService.NotifySSIDChange(s.handleSsidChange)
+
 }
 
 func (s *BleService) getServiceConfig() *bluetooth.Service {
@@ -64,4 +99,31 @@ func (s *BleService) setSsid(client bluetooth.Connection, offset int, value []by
 }
 func (s *BleService) setSecret(client bluetooth.Connection, offset int, value []byte) {
 
+}
+
+func (s *BleService) handleSsidChange(ssid *string) {
+	if ssid == nil {
+		temp := ""
+		ssid = &temp
+	}
+
+	strBytes, err := strTo33Bytes(*ssid)
+	if err != nil {
+		fmt.Println("error encoding string:", err)
+		return
+	}
+
+	_, err = s.connectedSsidChar.Write(strBytes[:])
+	if err != nil {
+		fmt.Println("error writing to ssid char:", err)
+		return
+	}
+}
+
+func (s *BleService) handleInternetStatusChange(status bool) {
+	statusArray := []byte{0x0}
+	if status {
+		statusArray[0] = 0x1
+	}
+	s.connectedToInternetChar.Write(statusArray)
 }
