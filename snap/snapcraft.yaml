@@ -1,0 +1,28 @@
+name: ble-wifi-config
+base: core20
+version: '0.1' 
+summary: Configure a wifi connection with bluetooth
+description: |
+  This snap allows you to connect a device to wifi. It also allows you to check the internet connectivity on the device
+
+grade: devel
+confinement: strict
+
+apps:
+  app:
+    command: bin/app
+    plugs: [network, bluez, network-manager]
+    daemon: simple
+
+parts:
+  app:
+    source: .
+    plugin: go
+    override-build: |
+      cd cmd/app
+      go build ./app.go
+      mkdir -p $SNAPCRAFT_PART_INSTALL/bin
+      cp app $SNAPCRAFT_PART_INSTALL/bin
+    stage: 
+      - bin/app
+      
