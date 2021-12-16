@@ -18,8 +18,8 @@ var (
 )
 
 type BleService struct {
-	wifiConfigService   wificonfig.WifiConfigService
 	connectivityService connectivity.ConnectivityService
+	wifiConfigService   wificonfig.WifiConfigService
 	adapter             bluetooth.Adapter
 
 	connectedToInternetChar bluetooth.Characteristic
@@ -40,11 +40,30 @@ func NewBleService(adapter bluetooth.Adapter, wifiConfigService wificonfig.WifiC
 }
 
 func (s *BleService) Start() error {
-	err := s.wireBleAttributes()
+	err := s.adapter.Enable()
 	if err != nil {
 		return err
 	}
 
+	err = s.wireBleAttributes()
+	if err != nil {
+		return fmt.Errorf("error wiring ble attributes: %v", err)
+	}
+
+	adv := s.adapter.DefaultAdvertisement()
+	err = adv.Configure(bluetooth.AdvertisementOptions{
+		LocalName:    "WifiSetup",
+		ServiceUUIDs: []bluetooth.UUID{WifiSetupServiceUUID},
+	})
+	if err != nil {
+		return err
+	}
+
+	err = adv.Start()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *BleService) wireBleAttributes() error {
@@ -56,6 +75,7 @@ func (s *BleService) wireBleAttributes() error {
 	s.connectivityService.NotifyInternetChange(s.handleInternetStatusChange)
 	s.wifiConfigService.NotifySSIDChange(s.handleSsidChange)
 
+	return nil
 }
 
 func (s *BleService) getServiceConfig() *bluetooth.Service {
@@ -64,7 +84,7 @@ func (s *BleService) getServiceConfig() *bluetooth.Service {
 		Characteristics: []bluetooth.CharacteristicConfig{
 			{
 				Handle: &s.connectedToInternetChar,
-				UUID:   ConnectedSsidCharUUID,
+				UUID:   ConnectedToInternetCharUUID,
 				Flags:  bluetooth.CharacteristicNotifyPermission | bluetooth.CharacteristicReadPermission,
 				Value:  make([]byte, 1),
 			}, {
@@ -74,7 +94,7 @@ func (s *BleService) getServiceConfig() *bluetooth.Service {
 				Value:  make([]byte, 33),
 			}, {
 				Handle:     &s.setSSidChar,
-				UUID:       SetSecretCharUUID,
+				UUID:       SetSsidCharUUID,
 				Flags:      bluetooth.CharacteristicWritePermission | bluetooth.CharacteristicWriteWithoutResponsePermission,
 				WriteEvent: s.setSsid,
 				Value:      make([]byte, 33),
@@ -82,7 +102,7 @@ func (s *BleService) getServiceConfig() *bluetooth.Service {
 				Handle:     &s.setSecretChar,
 				UUID:       SetSecretCharUUID,
 				Flags:      bluetooth.CharacteristicWritePermission | bluetooth.CharacteristicWriteWithoutResponsePermission,
-				WriteEvent: s.setSsid,
+				WriteEvent: s.setSecret,
 				Value:      make([]byte, 65),
 			}, {
 				Handle: &s.connectionErrorChar,
@@ -95,10 +115,24 @@ func (s *BleService) getServiceConfig() *bluetooth.Service {
 }
 
 func (s *BleService) setSsid(client bluetooth.Connection, offset int, value []byte) {
-
+	fmt.Println("got write: ", string(value))
+	ssid, err := bytesToStr(value)
+	if err != nil {
+		s.handleConnectionError(err)
+		return
+	}
+	err = s.wifiConfigService.SetSSID(ssid)
+	s.handleConnectionError(err)
 }
-func (s *BleService) setSecret(client bluetooth.Connection, offset int, value []byte) {
 
+func (s *BleService) setSecret(client bluetooth.Connection, offset int, value []byte) {
+	secret, err := bytesToStr(value)
+	if err != nil {
+		s.handleConnectionError(err)
+		return
+	}
+	err = s.wifiConfigService.SetSecret(secret)
+	s.handleConnectionError(err)
 }
 
 func (s *BleService) handleSsidChange(ssid *string) {
@@ -126,4 +160,28 @@ func (s *BleService) handleInternetStatusChange(status bool) {
 		statusArray[0] = 0x1
 	}
 	s.connectedToInternetChar.Write(statusArray)
+}
+
+func (s *BleService) handleConnectionError(err error) {
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	if errMsg == "" {
+		fmt.Println("clearing error")
+	}
+	if len(errMsg) > 128 {
+		errMsg = errMsg[:128]
+	}
+	errBytes, err := strTo129Bytes(errMsg)
+	if err != nil {
+		fmt.Println("Error serializing error msg:", err)
+		return
+	}
+
+	_, err = s.connectionErrorChar.Write(errBytes[:])
+	if err != nil {
+		fmt.Println("error writing connection error:", err)
+		return
+	}
 }
