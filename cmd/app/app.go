@@ -33,10 +33,9 @@ func main() {
 	err = service.Start()
 	checkErr("error starting bleservice", err)
 
-	for {
-		time.Sleep(time.Hour)
-	}
+	time.Sleep(15 * time.Minute)
 
+	fmt.Println("shutdown after 15 minutes.")
 }
 
 func checkErr(msg string, err error) {
